@@ -74,9 +74,11 @@ type ContentHeader struct {
     properties BasicProperties
 }
 
-func SendBasicPublish(conn net.Conn, exchange string, routingKey string, mandatory uint8, immediate uint8) {
+func SendBasicPublish(conn net.Conn, exchange string, routingKey string,
+        mandatory uint8, immediate uint8) {
     var flags byte = (mandatory << 0) + (immediate << 1)
-    params := []interface{} { BASIC, BASIC_PUBLISH, RESERVED16, []byte(exchange), []byte(routingKey), flags }
+    params := []interface{} { BASIC, BASIC_PUBLISH, RESERVED16,
+        []byte(exchange), []byte(routingKey), flags }
     bodyBuf := marshalM(params)
 
     header := Header { METHOD, 0, uint32(len(bodyBuf)) }
@@ -86,9 +88,11 @@ func SendBasicPublish(conn net.Conn, exchange string, routingKey string, mandato
     conn.Write(frame)
 }
 
-func SendBasicConsume(conn net.Conn, queue string, consumerTag string, noLocal byte, noAck byte,
+func SendBasicConsume(conn net.Conn, queue string, consumerTag string,
+        noLocal byte, noAck byte,
         exclusive byte, noWait byte, arguments []Field) {
-    params := []interface{} { BASIC, BASIC_CONSUME, RESERVED16, []byte(queue), []byte(consumerTag),
+    params := []interface{} { BASIC, BASIC_CONSUME, RESERVED16,
+        []byte(queue), []byte(consumerTag),
         packingBits(noLocal, noAck, exclusive, noWait), arguments }
     frame := marshalMethodFrame(0, params)
     conn.Write(frame)
@@ -96,7 +100,8 @@ func SendBasicConsume(conn net.Conn, queue string, consumerTag string, noLocal b
 
 func SendBasicDeliver(conn net.Conn, consumerTag string, deliveryTag string,
         redelivered byte, exchange string, routingKey string) {
-    params := []interface{} { BASIC, BASIC_DELIVER, []byte(consumerTag), []byte(deliveryTag),
+    params := []interface{} { BASIC, BASIC_DELIVER,
+        []byte(consumerTag), []byte(deliveryTag),
         packingBits(redelivered), []byte(exchange), []byte(routingKey)}
     frame := marshalMethodFrame(0, params)
     conn.Write(frame)

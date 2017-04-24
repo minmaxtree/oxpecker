@@ -66,17 +66,6 @@ func SendContentBody(conn net.Conn, body string) {
     conn.Write(frame)
 }
 
-func readHeader(conn net.Conn) (Header, error) {
-    headerBuf := make([]byte, 7)
-    _, err := conn.Read(headerBuf)
-    if err == io.EOF {
-        return Header {}, err
-    }
-    check(err)
-    header := unmarshalHeader(headerBuf)
-    return header, nil
-}
-
 func ServerReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
     header, err := readHeader(conn)
     if err == io.EOF {
@@ -331,11 +320,15 @@ func handleBasicDeliver(conn net.Conn, basicDeliver BasicDeliver) {
     fmt.Println("[handleBasicDeliver] received:", string(body))
 }
 
-func check(err error) {
-    if err != nil {
-        log.Println(err)
-        os.Exit(-1)
+func readHeader(conn net.Conn) (Header, error) {
+    headerBuf := make([]byte, 7)
+    _, err := conn.Read(headerBuf)
+    if err == io.EOF {
+        return Header {}, err
     }
+    check(err)
+    header := unmarshalHeader(headerBuf)
+    return header, nil
 }
 
 func readFrame(conn net.Conn) {
@@ -347,4 +340,11 @@ func readFrame(conn net.Conn) {
     bodyBuf := make([]byte, header.length + 1)  // end of frame 0xce
     _, err = conn.Read(bodyBuf)
     check(err)
+}
+
+func check(err error) {
+    if err != nil {
+        log.Println(err)
+        os.Exit(-1)
+    }
 }

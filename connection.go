@@ -19,6 +19,25 @@ const (
     CONNECTION_CLOSE_OK uint16 = 51
 )
 
+type ConnectionStart struct {
+    versionMajor byte
+    versionMinor byte
+    serverProperties []Field
+    mechanisms []string  // longStr, separeted by spaces
+    locales []string  // longStr, separated by spaces
+}
+
+type ConnectionStartOK struct {
+    clientProperties []Field
+    mechanism string  // shortStr
+    response string  // longStr
+    locale string  // shortStr
+}
+
+type ConnectionOpen struct {
+    virtualHost string  // path aka ShortStr
+}
+
 func SendConnectionStart(conn net.Conn, versionMajor byte, versionMinor byte,
         serverProperties []Field, mechanisms string, locales string) {
     classBuf := marshalUint16(10)  // connection
@@ -47,8 +66,8 @@ func ReceiveConnectionStart(conn net.Conn) {
 
 func SendConnectionStartOK(conn net.Conn, clientProperties []Field, mechanism string,
         response string, locale string) {
-    params := []interface{} { CONNECTION, CONNECTION_START_OK, clientProperties, []byte(mechanism), response,
-        []byte(locale) }
+    params := []interface{} { CONNECTION, CONNECTION_START_OK, clientProperties,
+        []byte(mechanism), response, []byte(locale) }
     bodyBuf := marshalM(params)
 
     header := Header {
@@ -66,8 +85,10 @@ func ReceiveConnectionStartOK(conn net.Conn) {
     readFrame(conn)
 }
 
-func SendConnectionTune(conn net.Conn, channelMax uint16, frameMax uint32, heartbeat uint16) {
-    params := []interface{} { CONNECTION, CONNECTION_TUNE, channelMax, frameMax, heartbeat }
+func SendConnectionTune(conn net.Conn, channelMax uint16,
+        frameMax uint32, heartbeat uint16) {
+    params := []interface{} { CONNECTION, CONNECTION_TUNE,
+        channelMax, frameMax, heartbeat }
     bodyBuf := marshalM(params)
 
     header := Header { METHOD, 0, uint32(len(bodyBuf)) }
@@ -81,8 +102,10 @@ func ReceiveConnectionTune(conn net.Conn) {
     readFrame(conn)
 }
 
-func SendConnectionTuneOK(conn net.Conn, channelMax uint16, frameMax uint32, heartbeat uint16) {
-    params := []interface{} { CONNECTION, CONNECTION_TUNE_OK, channelMax, frameMax, heartbeat }
+func SendConnectionTuneOK(conn net.Conn, channelMax uint16,
+        frameMax uint32, heartbeat uint16) {
+    params := []interface{} { CONNECTION, CONNECTION_TUNE_OK,
+        channelMax, frameMax, heartbeat }
     bodyBuf := marshalM(params)
 
     header := Header { METHOD, 0, uint32(len(bodyBuf)) }
@@ -97,7 +120,8 @@ func ReceiveConnectionTuneOK(conn net.Conn) {
 }
 
 func SendConnectionOpen(conn net.Conn, virtualHost string) {
-    params := []interface{} { CONNECTION, CONNECTION_OPEN, []byte(virtualHost), RESERVED8, RESERVED8 }
+    params := []interface{} { CONNECTION, CONNECTION_OPEN,
+            []byte(virtualHost), RESERVED8, RESERVED8 }
     bodyBuf := marshalM(params)
 
     header := Header { METHOD, 0, uint32(len(bodyBuf)) }
@@ -126,14 +150,6 @@ func ReceiveConnectionOpenOK(conn net.Conn) {
     readFrame(conn)
 }
 
-type ConnectionStart struct {
-    versionMajor byte
-    versionMinor byte
-    serverProperties []Field
-    mechanisms []string  // longStr, separeted by spaces
-    locales []string  // longStr, separated by spaces
-}
-
 func unmarshalConnectionStart(buf []byte) ConnectionStart {
     connectionStart := ConnectionStart {}
     connectionStart.versionMajor = buf[0]
@@ -148,13 +164,6 @@ func unmarshalConnectionStart(buf []byte) ConnectionStart {
     return connectionStart
 }
 
-type ConnectionStartOK struct {
-    clientProperties []Field
-    mechanism string  // shortStr
-    response string  // longStr
-    locale string  // shortStr
-}
-
 func unmarshalConnectionStartOK(buf []byte) ConnectionStartOK {
     connectionStartOK := ConnectionStartOK {}
     offs := 0
@@ -164,10 +173,6 @@ func unmarshalConnectionStartOK(buf []byte) ConnectionStartOK {
     connectionStartOK.locale, offs = unmarshalShortStr(buf, offs);
 
     return connectionStartOK
-}
-
-type ConnectionOpen struct {
-    virtualHost string  // path aka ShortStr
 }
 
 func unmarshalConnectionOpen(buf []byte) ConnectionOpen {
