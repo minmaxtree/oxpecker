@@ -16,7 +16,7 @@ func main() {
 
     conn, err := net.Dial("tcp", address)
     check(err)
-    oxpecker.WriteHeader(conn, 0, 0, 9, 1)
+    oxpecker.SendProtocolHeader(conn, 0, 0, 9, 1)
     oxpecker.ReceiveConnectionStart(conn)
     oxpecker.SendConnectionStartOK(conn, []oxpecker.Field {}, "", "", "en_US")
     oxpecker.ReceiveConnectionTune(conn)
