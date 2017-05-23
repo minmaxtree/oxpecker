@@ -38,6 +38,18 @@ type ConnectionOpen struct {
     virtualHost string  // path aka ShortStr
 }
 
+type ConnectionTune struct {
+    channelMax uint16
+    frameMax  uint32
+    heartbeat uint16
+}
+
+type ConnectionTuneOK struct {
+    channelMax uint16
+    frameMax uint32
+    heartbeat uint16
+}
+
 func SendConnectionStart(conn net.Conn, versionMajor byte, versionMinor byte,
         serverProperties []Field, mechanisms string, locales string) {
     classBuf := marshalUint16(10)  // connection
@@ -106,13 +118,7 @@ func SendConnectionTuneOK(conn net.Conn, channelMax uint16,
         frameMax uint32, heartbeat uint16) {
     params := []interface{} { CONNECTION, CONNECTION_TUNE_OK,
         channelMax, frameMax, heartbeat }
-    bodyBuf := marshalM(params)
-
-    header := Header { METHOD, 0, uint32(len(bodyBuf)) }
-    headerBuf := marshalHeader(header)
-
-    frame := addBufs(headerBuf, bodyBuf, eoframe)
-    conn.Write(frame)
+    sendMethodParams(conn, params)
 }
 
 func ReceiveConnectionTuneOK(conn net.Conn) {
@@ -128,6 +134,23 @@ func SendConnectionOpen(conn net.Conn, virtualHost string) {
     headerBuf := marshalHeader(header)
 
     frame := addBufs(headerBuf, bodyBuf, eoframe)
+    conn.Write(frame)
+}
+
+func SendConnectionClose(conn net.Conn,
+                         replyCode uint16,
+                         replyText string,
+                         classId uint16,
+                         methodId uint16) {
+    params := []interface {} {
+        CONNECTION,
+        CONNECTION_CLOSE,
+        replyCode,
+        []byte(replyText),
+        classId,
+        methodId,
+    }
+    frame := marshalMethodFrame(0, params)
     conn.Write(frame)
 }
 

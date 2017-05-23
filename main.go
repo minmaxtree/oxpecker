@@ -9,7 +9,101 @@ import (
     // "errors"
     // "strings"
     "io"
+    // "sync"
 )
+
+var defaultExchangeName string = ""
+
+type Oxpecker struct {
+    vHosts []VHost
+    connections map[net.Conn]Connection
+    // rwMutex sync.RWMutex
+}
+
+type VHost struct {
+    path string
+    exchanges map[string]Exchange
+    mQueues map[string]*MQueue
+}
+
+func newVHost(path string) VHost {
+    vHost := VHost {}
+    vHost.path = path
+    vHost.exchanges = map[string]Exchange {}
+    vHost.mQueues = map[string]*MQueue {}
+
+    // create default exchange
+    defaultExchange := newExchange(defaultExchangeName, EXCHANGE_DIRECT)
+    vHost.exchanges[defaultExchangeName] = defaultExchange
+    return vHost
+}
+
+const (
+    EXCHANGE_DIRECT = iota
+    EXCHANGE_TOPIC
+    EXCHANGE_FANOUT
+)
+
+type Exchange struct {
+    typ int
+    name string
+    binds map[string]*MQueue
+}
+
+func newExchange(name string, typ int) Exchange {
+    exchange := Exchange {}
+    exchange.name = name
+    exchange.typ = typ
+    exchange.binds = map[string]*MQueue {}
+    return exchange
+}
+
+type MQueue struct {
+    name string
+    messages []Message
+    consumers map[net.Conn]int
+}
+
+func newMQueue() *MQueue {
+    mQueue := MQueue {}
+    mQueue.messages = []Message {}
+    mQueue.consumers = map[net.Conn]int {}
+    return &mQueue
+}
+
+func (queue *MQueue)nextConsumer() net.Conn {
+    var least int
+    var ret net.Conn
+    isFirst := true
+    for consumer, count := range queue.consumers {
+        if count <= least || isFirst {
+            least = count
+            ret = consumer
+        }
+        isFirst = false
+    }
+    queue.consumers[ret]++
+    return ret
+}
+
+type Message struct {
+    content []byte
+    exchange string
+    routingKey string
+}
+
+func New() Oxpecker {
+    oxpecker := Oxpecker {}
+    oxpecker.vHosts = []VHost {}
+    oxpecker.connections = map[net.Conn]Connection {}
+
+    return oxpecker
+}
+
+type Connection struct {
+    vHost VHost
+    conn net.Conn
+}
 
 var eoframe = []byte { 0xce }
 var queues = map[string]*Queue {}
@@ -66,7 +160,7 @@ func SendContentBody(conn net.Conn, body string) {
     conn.Write(frame)
 }
 
-func ServerReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
+func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
     header, err := readHeader(conn)
     if err == io.EOF {
         return 0, 0, nil, err
@@ -92,6 +186,20 @@ func ServerReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
             case CONNECTION_OPEN:
                 connectionOpen := unmarshalConnectionOpen(bodyBuf[4:])
                 fmt.Println("connectionOpen is:", connectionOpen)
+                var connection Connection
+                vHostExists := false
+                for _, vHost := range oxpecker.vHosts {
+                    if vHost.path == connectionOpen.virtualHost {
+                        vHostExists = true
+                        connection = Connection { vHost: vHost, conn: conn }
+                    }
+                }
+                if !vHostExists {
+                    vHost := newVHost(connectionOpen.virtualHost)
+                    oxpecker.vHosts = append(oxpecker.vHosts, vHost)
+                    connection = Connection { vHost: vHost, conn: conn }
+                }
+                oxpecker.connections[conn] = connection
                 SendConnectionOpenOK(conn)
             }
         case QUEUE:
@@ -100,25 +208,72 @@ func ServerReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
                 queueDeclare := unmarshalQueueDeclare(bodyBuf[4:])
                 fmt.Println("queueDeclare is:", queueDeclare)
 
-                if queues["clojure"] == nil {
-                    newQueue := new(Queue)
-                    newQueue.Messages = [][]byte {}
-                    newQueue.Consumers = []net.Conn {}
-                    queues["clojure"] = newQueue
+                connection := oxpecker.connections[conn]
+                vHost := connection.vHost
+                var queue *MQueue
+                queueExists := false
+                for _, mQueue := range vHost.mQueues {
+                    if queueDeclare.queue == mQueue.name {
+                        queueExists = true
+                        queue = mQueue
+                        break
+                    }
                 }
 
-                SendQueueDeclareOK(conn, "clojure", 0, 0)
+                if !queueExists && queueDeclare.passive == 1 {
+                    break
+                }
+
+                if !queueExists && queueDeclare.passive == 0 {
+                    // create queue and default binding
+                    queue = newMQueue()
+                    queue.name = queueDeclare.queue
+                    vHost.mQueues[queue.name] = queue
+
+                    fmt.Println("queue.name is:", queue.name)
+                    fmt.Printf("queue is %#v\n", queue)
+
+                    for _, exchange := range vHost.exchanges {
+                        if exchange.name == defaultExchangeName {
+                            exchange.binds[queue.name] = queue
+                        }
+                    }
+                }
+
+                // if queues["clojure"] == nil {
+                //     newQueue := new(Queue)
+                //     newQueue.Messages = [][]byte {}
+                //     newQueue.Consumers = []net.Conn {}
+                //     queues["clojure"] = newQueue
+                // }
+
+                SendQueueDeclareOK(conn, queue.name, 0, 0)
             }
         case BASIC:
             switch method {
             case BASIC_PUBLISH:
                 basicPublish := unmarshalBasicPublish(bodyBuf[4:])
                 fmt.Println("basicPublish is:", basicPublish)
-                handleBasicPublish(conn, basicPublish)
+                oxpecker.handleBasicPublish(conn, basicPublish)
             case BASIC_CONSUME:
                 basicConsume := unmarshalBasicConsume(bodyBuf[4:])
                 fmt.Println("basicConsume is:", basicConsume)
-                go handleBasicConsume(conn, basicConsume)
+                if oxpecker.handleBasicConsume(conn, basicConsume) {
+                    consumerTag := basicConsume.consumerTag
+                    if consumerTag == "" {
+                        // consumerTag = oxpecker.getChannel().nextConsumerTag()
+                    }
+                    SendBasicConsumeOK(conn, consumerTag)
+                }
+            }
+        case EXCHANGE:
+            switch method {
+            case EXCHANGE_DECLARE:
+                exchangeDeclare := unmarshalExchangeDeclare(bodyBuf[4:])
+                fmt.Println("exchangeDeclare is:", exchangeDeclare)
+            case EXCHANGE_DELETE:
+                exchangeDelete := unmarshalExchangeDelete(bodyBuf[4:])
+                fmt.Println("exchangeDelete is:", exchangeDelete)
             }
         }
     } else if header.typ == HEADER {
@@ -190,37 +345,64 @@ func ClientReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
     return 0, 0, nil, nil
 }
 
-func handleBasicConsume(conn net.Conn, basicConsume BasicConsume) {
-    queue := queues[basicConsume.queue]
-    fmt.Println("[handleBasicConsume] queue is:", queue)
-    fmt.Println("[handleBasicConsume] queue name is:", basicConsume.queue)
-    queue.Consumers = append(queue.Consumers, conn)
-    fmt.Println("[handleBasicConsume] queue.Consumers is:", queue.Consumers)
+func (oxpecker *Oxpecker)routing(conn net.Conn, exchangeName string, routingKey string) []*MQueue {
+    queues := []*MQueue {}
 
-    if len(queue.Messages) > 0 {
-        for len(queue.Messages) > 0 {
-            message := queue.Messages[0]
+    connection := oxpecker.connections[conn]
+    vHost := connection.vHost
+    exchange, ok := vHost.exchanges[exchangeName]
+    if ok {
+        fmt.Println("<> exchangeName is:", exchangeName)
+        if exchange.typ == EXCHANGE_DIRECT {
+            fmt.Println("<> routingKey is:", routingKey)
+            fmt.Printf("<> exchange.binds[%s] is %#v\n",
+                routingKey, exchange.binds[routingKey])
 
-            SendBasicDeliver(queue.Consumers[0], "consumer_tag", "delivery_tag", 0, "", basicConsume.queue)
-            var propertyFlags uint16 = 0x9000
-            properties := BasicProperties {
-                ContentType: "text/plain",
-                DeliveryMode: 2,
+            queues = append(queues, exchange.binds[routingKey])
+        } else if exchange.typ == EXCHANGE_FANOUT {
+            for _, queue := range exchange.binds {
+                queues = append(queues, queue)
             }
-            SendContentHeader(queue.Consumers[0], uint64(len(message)), propertyFlags, properties)
-            SendContentBody(queue.Consumers[0], string(message))
-
-            queue.Messages = queue.Messages[1:]
         }
     }
-    fmt.Println("[2] queue.Consumers is:", queue.Consumers)
+
+    return queues
 }
 
-func handleBasicPublish(conn net.Conn, basicPublish BasicPublish) {
-    queue := queues[basicPublish.routingKey]
-    fmt.Println("[0] queue is:", queue)
+func (oxpecker *Oxpecker)findQueue(conn net.Conn, queueName string) (*MQueue, bool) {
+    connection := oxpecker.connections[conn]
+    vHost := connection.vHost
+    mQueue, ok := vHost.mQueues[queueName]
+    return mQueue, ok
+}
 
-    typ, _, payload, _ := ServerReceiveMessage(conn)
+func (oxpecker *Oxpecker)handleBasicConsume(conn net.Conn, basicConsume BasicConsume) bool {
+    // queue := queues[basicConsume.queue]
+    queue, ok := oxpecker.findQueue(conn, basicConsume.queue)
+    if ok {
+        fmt.Printf("[*] queue is %#v\n", queue)
+
+        fmt.Println("[handleBasicConsume] queue is:", queue)
+        fmt.Println("[handleBasicConsume] queue name is:", basicConsume.queue)
+        // queue.consumers = append(queue.consumers, conn)
+        queue.consumers[conn] = len(queue.messages)
+        for _, message := range queue.messages {
+            deliverMessage(conn, message)
+        }
+        fmt.Println("[handleBasicConsume] queue.consumers is:", queue.consumers)
+        return true
+    } else {
+        return false
+    }
+}
+
+func (oxpecker *Oxpecker)handleBasicPublish(conn net.Conn, basicPublish BasicPublish) {
+    queues := oxpecker.routing(conn, basicPublish.exchange, basicPublish.routingKey)
+
+    // queue := queues[basicPublish.routingKey]
+    // fmt.Println("[0] queue is:", queue)
+
+    typ, _, payload, _ := oxpecker.ServerReceiveMessage(conn)
 
     if typ == HEADER {
         switch payload.(type) {
@@ -236,7 +418,7 @@ func handleBasicPublish(conn net.Conn, basicPublish BasicPublish) {
     // receive content body
     body := []byte {}
     for {
-        typ, _, payload, err := ServerReceiveMessage(conn)
+        typ, _, payload, err := oxpecker.ServerReceiveMessage(conn)
         if err == io.EOF {
             break
         }
@@ -247,35 +429,52 @@ func handleBasicPublish(conn net.Conn, basicPublish BasicPublish) {
             break
         }
     }
-    queue.Messages = append(queue.Messages, body)
-    fmt.Println("queue.Messages is:", queue.Messages)
-    fmt.Println("len(queue.Messages) is:", len(queue.Messages))
-    fmt.Println("len(queue.Consumers) is:", len(queue.Consumers))
-    fmt.Println("queue.Consumers is:", queue.Consumers)
-    fmt.Println("routingKey is:", basicPublish.routingKey)
-    if len(queue.Consumers) > 0 {
-        for len(queue.Messages) > 0 {
-            message := queue.Messages[0]
 
-            SendBasicDeliver(queue.Consumers[0],
-                             "consumer_tag",
-                             "delivery_tag",
-                             0,
-                             "",
-                             basicPublish.routingKey,
-            )
-            var propertyFlags uint16 = 0x9000
-            properties := BasicProperties {
-                ContentType: "text/plain",
-                DeliveryMode: 2,
+    for _, queue := range queues {
+        fmt.Printf("[#] queue is %#v\n", queue)
+
+        message := Message {
+            content: body,
+            exchange: basicPublish.exchange,
+            routingKey: basicPublish.routingKey,
+        }
+        // queue.messages = append(queue.messages, message)
+
+        if len(queue.consumers) > 0 {
+            consumer := queue.nextConsumer()
+            deliverMessage(consumer, message)
+        } else {
+            queue.messages = append(queue.messages, message)
+        }
+
+        fmt.Println("queue.messages is:", queue.messages)
+        fmt.Println("len(queue.messages) is:", len(queue.messages))
+        fmt.Println("len(queue.consumers) is:", len(queue.consumers))
+        fmt.Println("queue.consumers is:", queue.consumers)
+        fmt.Println("routingKey is:", basicPublish.routingKey)
+
+        for _, vHost := range oxpecker.vHosts {
+            fmt.Println("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            fmt.Printf("vHost is %#v\n\n", vHost)
+            fmt.Printf("vHost.mQueues is %#v\n\n", vHost.mQueues)
+            for _, mQueue := range vHost.mQueues {
+                fmt.Printf("mQueue is %#v\n\n", mQueue)
+                fmt.Printf("mQueue.messages is %#v\n\n", mQueue.messages)
             }
-            SendContentHeader(queue.Consumers[0], uint64(len(message)),
-                propertyFlags, properties)
-            SendContentBody(queue.Consumers[0], string(message))
-
-            queue.Messages = queue.Messages[1:]
+            fmt.Println("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
         }
     }
+}
+
+func deliverMessage(conn net.Conn, message Message) {
+    SendBasicDeliver(conn, "consumer_tag", "delivery_tag", 0, message.exchange, message.routingKey)
+    var propertyFlags uint16 = 0x9000
+    properties := BasicProperties {
+        ContentType: "text/plain",
+        DeliveryMode: 2,
+    }
+    SendContentHeader(conn, uint64(len(message.content)), propertyFlags, properties)
+    SendContentBody(conn, string(message.content))
 }
 
 func handleBasicDeliver(conn net.Conn, basicDeliver BasicDeliver) {
@@ -341,6 +540,33 @@ func readFrame(conn net.Conn) {
     _, err = conn.Read(bodyBuf)
     check(err)
 }
+
+// func (oxpecker *Oxpecker)serveConsumers() {
+//     for {
+//         for _, vHost := range oxpecker.vHosts {
+//             for _, mQueue := range vHost.mQueues {
+//                 fmt.Println("[s] len(mQueue.messages) is:", len(mQueue.messages))
+//                 if len(mQueue.messages) > 0 {
+//                     p := len(mQueue.messages) / len(mQueue.consumers)
+//                     q := len(mQueue.messages) % len(mQueue.consumers)
+
+//                     i := 0
+//                     for k, _ := range mQueue.consumers {
+//                         n := p
+//                         if i < q { n++ }
+
+//                         for j := 0; j < n; j++ {
+//                             fmt.Println("************* will deliverMessage")
+//                             deliverMessage(k, mQueue.messages[0])
+//                             mQueue.messages = mQueue.messages[1:]
+//                         }
+//                         i++
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }
 
 func check(err error) {
     if err != nil {

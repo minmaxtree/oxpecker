@@ -29,6 +29,64 @@ type QueueDeclare struct {
     arguments []Field  // table aka FieldTable
 }
 
+type QueueBind struct {
+    // reserved-1
+    queue string  // ShortStr
+    exchange string  // ShortStr
+    routingKey string  // ShortStr
+    noWait byte  // bit
+    arguments []Field
+}
+
+func unmarshalQueueBind(buf []byte) QueueBind {
+    queueBind := QueueBind {}
+    offs := 0
+    offs += 8  // reserved-1
+    queueBind.queue, offs = unmarshalShortStr(buf, offs)
+    queueBind.exchange, offs = unmarshalShortStr(buf, offs)
+    queueBind.routingKey, offs = unmarshalShortStr(buf, offs)
+    queueBind.noWait, offs = unmarshalUint8(buf, offs)
+    queueBind.arguments, offs = unmarshalFieldTable(buf, offs)
+
+    return queueBind
+}
+
+type QueueUnbind struct {
+    // reserved-1
+    queue string  // ShortStr
+    exchange string  // ShortStr
+    routingKey string  // ShortStr
+    arguments []Field
+}
+
+func unmarshalQueueUnbind(buf []byte) QueueUnbind {
+    queueUnbind := QueueUnbind {}
+    offs := 0
+    offs += 8  // reserved-1
+    queueUnbind.queue, offs = unmarshalShortStr(buf, offs)
+    queueUnbind.exchange, offs = unmarshalShortStr(buf, offs)
+    queueUnbind.routingKey, offs = unmarshalShortStr(buf, offs)
+    queueUnbind.arguments, offs = unmarshalFieldTable(buf, offs)
+
+    return queueUnbind
+}
+
+type QueuePurge struct {
+    // reserved-1
+    queue string  // ShortStr
+    noWait byte  // bit
+}
+
+func unmarshalQueuePurge(buf []byte) QueuePurge {
+    queuePurge := QueuePurge {}
+    offs := 0
+    offs += 8  // reserved-1
+    queuePurge.queue, offs = unmarshalShortStr(buf, offs)
+    queuePurge.noWait, offs = unmarshalUint8(buf, offs)
+
+    return queuePurge
+}
+
 func unmarshalQueueDeclare(buf []byte) QueueDeclare {
     queueDeclare := QueueDeclare {}
     offs := 0

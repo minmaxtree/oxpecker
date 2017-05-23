@@ -28,10 +28,10 @@ func main() {
     oxpecker.SendQueueDeclare(conn, "elixir", 0, 0, 0, 0, 0, []oxpecker.Field {})
     oxpecker.ReceiveQueueDeclareOK(conn)
 
-    defaultExchange := ""
-    oxpecker.SendBasicPublish(conn, defaultExchange, "clojure", 0, 0)
+    // defaultExchange := ""
+    // oxpecker.SendBasicPublish(conn, defaultExchange, "elixir", 0, 0)
 
-    oxpecker.SendBasicConsume(conn, "clojure", "consumer0", 0, 0, 0, 0, []oxpecker.Field {})
+    oxpecker.SendBasicConsume(conn, "elixir", "consumer0", 0, 0, 0, 0, []oxpecker.Field {})
 
     for {
         oxpecker.ClientReceiveMessage(conn)

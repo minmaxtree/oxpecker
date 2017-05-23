@@ -26,9 +26,13 @@ var address = ":22222"
 var queueMap = map[string]*oxpecker.Queue {}
 
 func main() {
+    oxp := oxpecker.New()
+
     if len(os.Args) > 1 {
         address = ":" + os.Args[1]
     }
+
+    // go oxp.ServeConsumers()
 
     ln, err := net.Listen("tcp", address)
     check(err)
@@ -40,7 +44,7 @@ func main() {
         go func() {
             listen(conn)
             for {
-                oxpecker.ServerReceiveMessage(conn)
+                oxp.ServerReceiveMessage(conn)
             }
         }()
     }

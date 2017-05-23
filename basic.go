@@ -44,6 +44,10 @@ type BasicConsume struct {
     arguments []Field
 }
 
+type BasicConsumeOK struct {
+    consumerTag string  // ShortStr
+}
+
 type BasicDeliver struct {
     consumerTag string  // ShortStr
     deliveryTag string  // ShortStr
@@ -51,6 +55,49 @@ type BasicDeliver struct {
     exchange string  // ShortStr
     routingKey string  // ShortStr
 }
+
+type BasicGet struct {
+    // reserved-1
+    queue string  // ShortStr
+    noAck byte  // bit
+}
+
+func SendBasicGet(conn net.Conn, queue string, noAck byte) {
+    params := []interface{} {
+        BASIC,
+        BASIC_GET,
+        []byte(queue),
+        noAck,
+    }
+    sendMethodParams(conn, params)
+}
+
+type BasicGetOK struct {
+    deliveryTag string  // ShortStr
+    redelivered byte
+    exchange string  // ShortStr
+    routingKey string  // ShortStr
+    messageCount uint32
+}
+
+func SendBasicGetOK(conn net.Conn,
+                    deliveryTag string,
+                    redelivered byte,
+                    exchange string,
+                    routingKey string,
+                    messageCount uint32) {
+    params := []interface{} {
+        BASIC,
+        BASIC_GET,
+        []byte(deliveryTag),
+        redelivered,
+        []byte(exchange),
+        []byte(routingKey),
+        messageCount,
+    }
+    sendMethodParams(conn, params)
+}
+
 
 type BasicProperties struct {
     ContentType string  // shortStr, 15
@@ -96,6 +143,11 @@ func SendBasicConsume(conn net.Conn, queue string, consumerTag string,
         packingBits(noLocal, noAck, exclusive, noWait), arguments }
     frame := marshalMethodFrame(0, params)
     conn.Write(frame)
+}
+
+func SendBasicConsumeOK(conn net.Conn, consumerTag string) {
+    params := []interface{} { BASIC, BASIC_CONSUME_OK, []byte(consumerTag) }
+    sendMethodParams(conn, params)
 }
 
 func SendBasicDeliver(conn net.Conn, consumerTag string, deliveryTag string,

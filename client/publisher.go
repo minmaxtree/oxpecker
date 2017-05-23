@@ -29,7 +29,7 @@ func main() {
     oxpecker.ReceiveQueueDeclareOK(conn)
 
     defaultExchange := ""
-    oxpecker.SendBasicPublish(conn, defaultExchange, "clojure", 0, 0)
+    oxpecker.SendBasicPublish(conn, defaultExchange, "elixir", 0, 0)
     data := "hello from publisher!\n"
     // oxpecker.SendBasicPublishData(conn, data)
     var propertyFlags uint16 = 0x9000
