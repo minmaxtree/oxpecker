@@ -32,6 +32,27 @@ func main() {
     oxpecker.SendQueueDeclare(conn, "elixir", 0, 0, 0, 0, 0, []oxpecker.Field {})
     oxpecker.ReceiveQueueDeclareOK(conn)
 
+    oxpecker.SendExchangeDeclare(
+        conn,
+        "my_fanout_exchange",  // exchange
+        "x-fanout",  // type
+        0,  // passive
+        0,  // durable
+        1,  // noWait
+        []oxpecker.Field{},  // arguments
+    )
+    oxpecker.ReceiveExchangeDeclareOK(conn)
+
+    oxpecker.SendQueueBind(
+        conn,
+        "elixir",  // queue
+        "my_fanout_exchange",  // exchange
+        "my_routing_key",  // routingKey
+        0,  // noWait
+        []oxpecker.Field{},  // arguments
+    )
+    oxpecker.ReceiveQueueBindOK(conn)
+
     // defaultExchange := ""
     // oxpecker.SendBasicPublish(conn, defaultExchange, "elixir", 0, 0)
 

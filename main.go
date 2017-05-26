@@ -33,29 +33,131 @@ func newVHost(path string) VHost {
     vHost.mQueues = map[string]*MQueue {}
 
     // create default exchange
-    defaultExchange := newExchange(defaultExchangeName, EXCHANGE_DIRECT)
+    // defaultExchange := newExchange(defaultExchangeName, EXCHANGE_DIRECT)
+    defaultExchange := newDirectExchange(defaultExchangeName)
     vHost.exchanges[defaultExchangeName] = defaultExchange
     return vHost
 }
 
-const (
-    EXCHANGE_DIRECT = iota
-    EXCHANGE_TOPIC
-    EXCHANGE_FANOUT
-)
+type Exchange interface {
+    routing(routingKey string, arguments []Field) []*MQueue
+    getName() string
+    bind(routingKey string, arguments []Field, queue *MQueue) bool
+}
 
-type Exchange struct {
-    typ int
+func (directExchange *DirectExchange)routing(routingKey string, arguments []Field) []*MQueue {
+    queues := []*MQueue {}
+    queues = append(queues, directExchange.binds[routingKey])
+    return queues
+}
+
+func (directExchange DirectExchange)getName() string {
+    return directExchange.name
+}
+
+func (directExchange *DirectExchange)bind(routingKey string, arguments []Field, queue *MQueue) bool {
+    directExchange.binds[routingKey] = queue
+    return true
+}
+
+func (fanoutExchange *FanoutExchange)routing(routingKey string, arguments []Field) []*MQueue {
+    queues := []*MQueue {}
+    for _, queue := range fanoutExchange.binds {
+        queues = append(queues, queue)
+    }
+    return queues
+}
+
+func (fanoutExchange FanoutExchange)getName() string {
+    return fanoutExchange.name
+}
+
+func (fanoutExchange FanoutExchange)bind(routingKey string, arguments []Field, queue *MQueue) bool {
+    fanoutExchange.binds = append(fanoutExchange.binds, queue)
+    return true
+}
+
+func (headersExchange HeadersExchange)bind(routingKey string, arguments []Field, queue *MQueue) bool {
+    binding := HEBinding {}
+    for _, argument := range arguments {
+        name := argument.name
+        content, ok := argument.content.(string)
+        if !ok {
+            return false
+        }
+        if name == "x-match" {
+            if content == "all" {
+                binding.typ = HEBindingAll
+            } else if content == "any" {
+                binding.typ = HEBindingAny
+            } else {
+                return false
+            }
+        } else {
+            binding.headers[name] = content
+        }
+    }
+
+    headersExchange.binds = append(headersExchange.binds, &binding)
+
+    return true
+}
+
+type DirectExchange struct {
     name string
     binds map[string]*MQueue
 }
 
-func newExchange(name string, typ int) Exchange {
-    exchange := Exchange {}
+type FanoutExchange struct {
+    name string
+    binds []*MQueue
+}
+
+type TopicExchange struct {
+    name string
+    binds map[string]*MQueue
+}
+
+type HeadersExchange struct {
+    name string
+    binds []*HEBinding
+}
+
+type HEBinding struct {
+    typ int
+    // headers []MHeader
+    headers map[string]string
+    mQueue *MQueue
+}
+
+const (
+    HEBindingAll = iota
+    HEBindingAny
+)
+
+// type MHeader struct {
+//     typ int
+//     fields map[string]string
+// }
+
+// type Exchange struct {
+//     typ int
+//     name string
+//     binds map[string]*MQueue
+// }
+
+func newDirectExchange(name string) *DirectExchange {
+    exchange := DirectExchange {}
     exchange.name = name
-    exchange.typ = typ
     exchange.binds = map[string]*MQueue {}
-    return exchange
+    return &exchange
+}
+
+func newFanoutExchange(name string) *FanoutExchange {
+    exchange := FanoutExchange {}
+    exchange.name = name
+    exchange.binds = []*MQueue {}
+    return &exchange
 }
 
 type MQueue struct {
@@ -160,6 +262,15 @@ func SendContentBody(conn net.Conn, body string) {
     conn.Write(frame)
 }
 
+func (oxpecker *Oxpecker)closeClient(conn net.Conn) {
+    delete(oxpecker.connections, conn)
+    for _, vHost := range oxpecker.vHosts {
+        for _, mQueue := range vHost.mQueues {
+            delete(mQueue.consumers, conn)
+        }
+    }
+}
+
 func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
     header, err := readHeader(conn)
     if err == io.EOF {
@@ -201,6 +312,12 @@ func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, inte
                 }
                 oxpecker.connections[conn] = connection
                 SendConnectionOpenOK(conn)
+            case CONNECTION_CLOSE:
+                connectionClose := unmarshalConnectionClose(bodyBuf[4:])
+                fmt.Println("connectionClose is:", connectionClose)
+                SendConnectionCloseOK(conn)
+
+                oxpecker.closeClient(conn)
             }
         case QUEUE:
             switch method {
@@ -233,11 +350,14 @@ func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, inte
                     fmt.Println("queue.name is:", queue.name)
                     fmt.Printf("queue is %#v\n", queue)
 
-                    for _, exchange := range vHost.exchanges {
-                        if exchange.name == defaultExchangeName {
-                            exchange.binds[queue.name] = queue
-                        }
-                    }
+                    exchange := vHost.exchanges[defaultExchangeName]
+                    exchange.bind(queueDeclare.queue, []Field {}, queue)
+
+                    // for _, exchange := range vHost.exchanges {
+                    //     if exchange.getName() == defaultExchangeName {
+                    //         exchange.binds[queue.name] = queue
+                    //     }
+                    // }
                 }
 
                 // if queues["clojure"] == nil {
@@ -248,6 +368,12 @@ func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, inte
                 // }
 
                 SendQueueDeclareOK(conn, queue.name, 0, 0)
+            case QUEUE_BIND:
+                queueBind := unmarshalQueueBind(bodyBuf[4:])
+                fmt.Println("queueBind is:", queueBind)
+                if oxpecker.handleQueueBind(conn, queueBind) {
+                    SendQueueBindOK(conn)
+                }
             }
         case BASIC:
             switch method {
@@ -271,6 +397,9 @@ func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, inte
             case EXCHANGE_DECLARE:
                 exchangeDeclare := unmarshalExchangeDeclare(bodyBuf[4:])
                 fmt.Println("exchangeDeclare is:", exchangeDeclare)
+                if oxpecker.handleExchangeDeclare(conn, exchangeDeclare) {
+                    SendExchangeDeclareOK(conn)
+                }
             case EXCHANGE_DELETE:
                 exchangeDelete := unmarshalExchangeDelete(bodyBuf[4:])
                 fmt.Println("exchangeDelete is:", exchangeDelete)
@@ -296,6 +425,64 @@ func (oxpecker *Oxpecker)ServerReceiveMessage(conn net.Conn) (byte, uint16, inte
     return header.typ, header.channel, payload, nil
 }
 
+func (oxpecker *Oxpecker)findConnVHost(conn net.Conn) (VHost, bool) {
+    connection, ok := oxpecker.connections[conn]
+    if !ok {
+        return VHost {}, false
+    }
+    return connection.vHost, true
+}
+
+func (oxpecker *Oxpecker)handleExchangeDeclare(conn net.Conn, exchangeDeclare ExchangeDeclare) bool {
+    // exchange := newExchange(exchangeDeclare.exchange, 0)
+
+    // switch exchangeDeclare.typ {
+    // case "fanout":
+    //     exchange.typ = EXCHANGE_FANOUT
+    // default:
+    //     return false
+    // }
+
+    vHost, ok := oxpecker.findConnVHost(conn)
+    if !ok {
+        return false
+    }
+    var exchange Exchange
+    switch exchangeDeclare.typ {
+    case "x-direct":
+        exchange = newDirectExchange(exchangeDeclare.exchange)
+    case "x-fanout":
+        exchange = newFanoutExchange(exchangeDeclare.exchange)
+    default:
+        return false
+    }
+    vHost.exchanges[exchangeDeclare.exchange] = exchange
+
+    return true
+}
+
+func (oxpecker *Oxpecker)handleQueueBind(conn net.Conn, queueBind QueueBind) bool {
+    vHost, ok := oxpecker.findConnVHost(conn)
+    if !ok {
+        return false
+    }
+    // vHost.exchanges[queueBind.exchange] = queueBind.queue
+    // queueBind.routingKey
+    exchange, ok := vHost.exchanges[queueBind.exchange]
+    if !ok {
+        return false
+    }
+    queue, ok := vHost.mQueues[queueBind.queue]
+    if !ok {
+        return false
+    }
+    // headers, ok := makeMHeader(queueBind.arguments)
+    // if !ok {
+    //     return false
+    // }
+    return exchange.bind(queueBind.routingKey, queueBind.arguments, queue)
+}
+
 func ClientReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
     header, err := readHeader(conn)
     if err == io.EOF {
@@ -316,6 +503,11 @@ func ClientReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
             case CONNECTION_START:
                 connectionStart := unmarshalConnectionStart(bodyBuf[4:])
                 fmt.Println("connectionStart is:", connectionStart)
+            case CONNECTION_CLOSE:
+                SendConnectionCloseOK(conn)
+                return 0, 0, nil, nil
+            case CONNECTION_CLOSE_OK:
+                return 0, 0, nil, nil
             }
         case BASIC:
             switch method {
@@ -345,25 +537,15 @@ func ClientReceiveMessage(conn net.Conn) (byte, uint16, interface{}, error) {
     return 0, 0, nil, nil
 }
 
-func (oxpecker *Oxpecker)routing(conn net.Conn, exchangeName string, routingKey string) []*MQueue {
+func (oxpecker *Oxpecker)routing(conn net.Conn, exchangeName string,
+        routingKey string, arguments []Field) []*MQueue {
     queues := []*MQueue {}
 
     connection := oxpecker.connections[conn]
     vHost := connection.vHost
     exchange, ok := vHost.exchanges[exchangeName]
     if ok {
-        fmt.Println("<> exchangeName is:", exchangeName)
-        if exchange.typ == EXCHANGE_DIRECT {
-            fmt.Println("<> routingKey is:", routingKey)
-            fmt.Printf("<> exchange.binds[%s] is %#v\n",
-                routingKey, exchange.binds[routingKey])
-
-            queues = append(queues, exchange.binds[routingKey])
-        } else if exchange.typ == EXCHANGE_FANOUT {
-            for _, queue := range exchange.binds {
-                queues = append(queues, queue)
-            }
-        }
+        return exchange.routing(routingKey, arguments)
     }
 
     return queues
@@ -389,6 +571,7 @@ func (oxpecker *Oxpecker)handleBasicConsume(conn net.Conn, basicConsume BasicCon
         for _, message := range queue.messages {
             deliverMessage(conn, message)
         }
+        queue.messages = []Message {}
         fmt.Println("[handleBasicConsume] queue.consumers is:", queue.consumers)
         return true
     } else {
@@ -397,17 +580,26 @@ func (oxpecker *Oxpecker)handleBasicConsume(conn net.Conn, basicConsume BasicCon
 }
 
 func (oxpecker *Oxpecker)handleBasicPublish(conn net.Conn, basicPublish BasicPublish) {
-    queues := oxpecker.routing(conn, basicPublish.exchange, basicPublish.routingKey)
+    // queues := oxpecker.routing(conn, basicPublish.exchange, basicPublish.routingKey)
+
 
     // queue := queues[basicPublish.routingKey]
     // fmt.Println("[0] queue is:", queue)
 
     typ, _, payload, _ := oxpecker.ServerReceiveMessage(conn)
 
+    var arguments []Field
+
     if typ == HEADER {
         switch payload.(type) {
         case ContentHeader:
             // process content header info
+            contentHeader := payload.(ContentHeader)
+            propertyFlags := contentHeader.propertyFlags
+            properties := payload.(ContentHeader).properties
+            if ((propertyFlags >> 13) & 1) == 1 {
+                arguments = properties.Headers
+            }
         default:
             // error 505
         }
@@ -429,6 +621,8 @@ func (oxpecker *Oxpecker)handleBasicPublish(conn net.Conn, basicPublish BasicPub
             break
         }
     }
+
+    queues := oxpecker.routing(conn, basicPublish.exchange, basicPublish.routingKey, arguments)
 
     for _, queue := range queues {
         fmt.Printf("[#] queue is %#v\n", queue)

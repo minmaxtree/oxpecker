@@ -12,6 +12,13 @@ const (
     EXCHANGE_DELETE_OK uint16 = 21
 )
 
+const (
+    EXCHANGE_DIRECT = iota
+    EXCHANGE_TOPIC
+    EXCHANGE_FANOUT
+    EXCHNAGE_HEADERS
+)
+
 type ExchangeDeclare struct {
     // reserved-1
     exchange string  // shortStr
@@ -39,7 +46,7 @@ type ExchangeDeleteOK struct {}
 func unmarshalExchangeDeclare(buf []byte) ExchangeDeclare {
     exchangeDeclare := ExchangeDeclare {}
     offs := 0
-    offs += 2  // reserved-1
+    offs += 1  // reserved-1
     exchangeDeclare.exchange, offs = unmarshalShortStr(buf, offs)
     exchangeDeclare.typ, offs = unmarshalShortStr(buf, offs)
     flags, offs := unmarshalUint8(buf, offs);
@@ -73,7 +80,7 @@ func SendExchangeDeclare(conn net.Conn,
                          durable byte,
                          noWait byte,
                          arguments []Field) {
-    var flags byte = passive << 0 + durable << 1 + noWait << 2
+    var flags byte = passive << 0 + durable << 1
     params := []interface {} {
         EXCHANGE,
         EXCHANGE_DECLARE,
@@ -81,8 +88,24 @@ func SendExchangeDeclare(conn net.Conn,
         []byte(exchange),
         []byte(typ),
         flags,
+        RESERVED8,
+        RESERVED8,
+        noWait,
         arguments,
     }
     frame := marshalMethodFrame(0, params)
     conn.Write(frame)
+}
+
+func SendExchangeDeclareOK(conn net.Conn) {
+    params := []interface{} {
+        EXCHANGE,
+        EXCHANGE_DECLARE_OK,
+    }
+    frame := marshalMethodFrame(0, params)
+    conn.Write(frame)
+}
+
+func ReceiveExchangeDeclareOK(conn net.Conn) {
+    readFrame(conn)
 }

@@ -41,7 +41,7 @@ type QueueBind struct {
 func unmarshalQueueBind(buf []byte) QueueBind {
     queueBind := QueueBind {}
     offs := 0
-    offs += 8  // reserved-1
+    offs += 1 // reserved-1
     queueBind.queue, offs = unmarshalShortStr(buf, offs)
     queueBind.exchange, offs = unmarshalShortStr(buf, offs)
     queueBind.routingKey, offs = unmarshalShortStr(buf, offs)
@@ -49,6 +49,37 @@ func unmarshalQueueBind(buf []byte) QueueBind {
     queueBind.arguments, offs = unmarshalFieldTable(buf, offs)
 
     return queueBind
+}
+
+func SendQueueBind(conn net.Conn,
+                   queue string,
+                   exchange string,
+                   routingKey string,
+                   noWait byte,
+                   arguments []Field) {
+    params := [] interface{} {
+        QUEUE,
+        QUEUE_BIND,
+        RESERVED8,
+        []byte(queue),
+        []byte(exchange),
+        []byte(routingKey),
+        noWait,
+        arguments,
+    }
+    sendMethodParams(conn, params)
+}
+
+func SendQueueBindOK(conn net.Conn) {
+    params := []interface{} {
+        QUEUE,
+        QUEUE_BIND_OK,
+    }
+    sendMethodParams(conn, params)
+}
+
+func ReceiveQueueBindOK(conn net.Conn) {
+    readFrame(conn)
 }
 
 type QueueUnbind struct {

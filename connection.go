@@ -50,6 +50,13 @@ type ConnectionTuneOK struct {
     heartbeat uint16
 }
 
+type ConnectionClose struct {
+    replyCode uint16
+    replyText string  // ShortStr
+    classId uint16
+    methodId uint16
+}
+
 func SendConnectionStart(conn net.Conn, versionMajor byte, versionMinor byte,
         serverProperties []Field, mechanisms string, locales string) {
     classBuf := marshalUint16(10)  // connection
@@ -154,6 +161,15 @@ func SendConnectionClose(conn net.Conn,
     conn.Write(frame)
 }
 
+func SendConnectionCloseOK(conn net.Conn) {
+    params := []interface {} {
+        CONNECTION,
+        CONNECTION_CLOSE_OK,
+    }
+    frame := marshalMethodFrame(0, params)
+    conn.Write(frame)
+}
+
 func ReceiveConnectionOpen(conn net.Conn) {
     readFrame(conn)
 }
@@ -204,4 +220,15 @@ func unmarshalConnectionOpen(buf []byte) ConnectionOpen {
     connectionOpen.virtualHost, _ = unmarshalShortStr(buf, offs)
 
     return connectionOpen
+}
+
+func unmarshalConnectionClose(buf []byte) ConnectionClose {
+    connectionClose := ConnectionClose {}
+    offs := 0
+    connectionClose.replyCode, offs = unmarshalUint16(buf, offs)
+    connectionClose.replyText ,offs = unmarshalShortStr(buf, offs)
+    connectionClose.classId, offs = unmarshalUint16(buf, offs)
+    connectionClose.methodId, offs = unmarshalUint16(buf, offs)
+
+    return connectionClose
 }

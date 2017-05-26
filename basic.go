@@ -98,7 +98,6 @@ func SendBasicGetOK(conn net.Conn,
     sendMethodParams(conn, params)
 }
 
-
 type BasicProperties struct {
     ContentType string  // shortStr, 15
     ContentEncoding string  // shortStr, 14
